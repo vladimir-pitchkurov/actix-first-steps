@@ -1,4 +1,5 @@
 use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
+use std::sync::Mutex;
 
 // #[get("/")]
 // async fn hello() -> impl Responder {
@@ -18,6 +19,16 @@ async fn index0() -> impl Responder {
     "Some INDEX"
 }
 
+struct AppStateWithCounter {
+    counter: Mutex<i32>, // <- Mutex is necessary to mutate safely across threads
+}
+
+async fn counter_index(data: web::Data<AppStateWithCounter>) -> String {
+    let mut counter = data.counter.lock().unwrap(); // <- get counter's MutexGuard
+    *counter += 1; // <- access counter inside MutexGuard
+
+    format!("Request number: {counter}") // <- response with count
+}
 
 // This struct represents state
 struct AppState {
@@ -32,17 +43,24 @@ async fn index(data: web::Data<AppState>) -> String {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    HttpServer::new(|| {
+    // Note: web::Data created _outside_ HttpServer::new closure
+    let count = web::Data::new(AppStateWithCounter {
+        counter: Mutex::new(0),
+    });
+
+    HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(AppState {
                 app_name: String::from("Actix Web"),
             }))
+            .app_data(count.clone())
             .service(
                 // prefixes all resources and routes attached to it...
                 web::scope("/app")
                     // ...so this handles requests for `GET /app/index.html`
                     .route("/index.html", web::get().to(index0)),
             )
+            .route("/counter", web::get().to(counter_index))
             .service(index)
             .service(echo)
             .route("/hey", web::get().to(manual_hello))
